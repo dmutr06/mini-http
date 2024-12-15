@@ -134,8 +134,8 @@ module MiniHttp
       route("DELETE", path, &block) 
     end
 
-    def puts(path, &block)
-      route("PUTS", path, &block) 
+    def put(path, &block)
+      route("PUT", path, &block) 
     end
 
     def patch(path, &block)
