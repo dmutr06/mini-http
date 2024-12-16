@@ -74,6 +74,16 @@ module MiniHttp
       self
     end
 
+    def send(socket)
+      if body
+        headers["Content-Type"] = body.content_type
+        self.body = body.to_s
+        headers["Content-Length"] = body.length
+      end
+
+      socket.print(self.to_s)
+    end
+
     private
 
     def reason_phrase(code)
@@ -85,12 +95,14 @@ module MiniHttp
   Json = Content.new("application/json")
   Css = Content.new("text/css")
   Plain = Content.new("text/plain")
-  
+
+  # TODO: create thread pool
   class Server 
     def initialize(port)
       @server = TCPServer.new(port)
       @port = port
       @routes = Hash.new
+      @middlewares = []
     end
 
     def port
@@ -101,6 +113,10 @@ module MiniHttp
       while socket = @server.accept
       handle(socket)
       end
+    end
+
+    def use(&block)
+      @middlewares.push(block)
     end
 
     def route(method, path, &block)
@@ -170,53 +186,71 @@ module MiniHttp
 
       [cur[:handler], params]
     end
+    
 
+    # TODO: change everything, this func is overcomplicated
     def handle(socket)
       Thread.new do
-        reqLine = socket.gets
-        if reqLine.nil?
+        begin
+          reqLine = socket.gets
+          if reqLine.nil?
+            socket.close
+            Thread.exit
+          end
+
+          method, path, _ver = reqLine.split(' ', 3)
+
+          headers = {}
+          while (line = socket.gets.chomp) && !line.empty?
+            key, val = line.split(": ", 2)
+            headers[key] = val
+          end
+
+          body = 
+            if headers["Content-Length"]
+              len = headers["Content-Length"].to_i
+              socket.read(len)
+            else nil end
+
+          handler = get_handler(method, path)
+          res = 
+            if handler.nil?
+              Response[code: 404, body: Html["<h1>Not Found</h1>"]]
+            else
+              req = Request[method, path, handler[1], headers, body]
+
+              mw_res = nil
+              begin
+                @middlewares.each do |mw|
+                  mw_res = mw.call(req)
+
+                  break if mw_res.respond_to?(:to_res)
+                end
+              rescue => e
+              # TODO: handle exception
+              end
+
+              if mw_res.nil?
+                handler[0].call(req)
+              else
+                mw_res
+              end
+            end
+
+          if !res.respond_to?(:to_res)
+            raise "Something went wrong..."
+          end
+
+          res = res.to_res
+          res.send(socket)
+
+        rescue => e
+          puts "Err: #{e.message}"
+          Response[code: 500].send(socket)
+
+        ensure 
           socket.close
-          Thread.exit
         end
-
-        method, path, _ver = reqLine.split(' ', 3)
-
-        headers = {}
-        while (line = socket.gets.chomp) && !line.empty?
-          key, val = line.split(": ", 2)
-          headers[key] = val
-        end
-
-        body = 
-          if headers["Content-Length"]
-            len = headers["Content-Length"].to_i
-            socket.read(len)
-          else nil end
-
-        handler = get_handler(method, path)
-
-        res = 
-          if handler.nil?
-            Response[code: 404, body: Html["<h1>Not Found</h1>"]]
-          else
-            handler[0].call(Request[method, path, handler[1], headers, body])
-          end
-
-        res =  
-          if res.respond_to?(:to_res)
-            res.to_res
-          else
-            Response[code: 500]
-          end
-        
-        if res.body
-          res.headers["Content-Type"] = res.body.content_type
-          res.body = res.body.to_s
-          res.headers["Content-Length"] = res.body.length
-        end
-
-        socket.print(res.to_s)
-        socket.close
       end
     end
   end
