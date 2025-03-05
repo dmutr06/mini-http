@@ -96,13 +96,22 @@ module MiniHttp
   Css = Content.new("text/css")
   Plain = Content.new("text/plain")
 
-  # TODO: create thread pool
   class Server 
-    def initialize(port)
+    def initialize(port, max_threads: 10)
       @server = TCPServer.new(port)
       @port = port
       @routes = Hash.new
       @middlewares = []
+
+      @queue = Queue.new
+      @workers = Array.new(max_threads) do
+        Thread.new do
+          loop do
+            socket = @queue.pop
+            handle(socket)
+          end
+        end
+      end
     end
 
     def port
@@ -111,7 +120,7 @@ module MiniHttp
     
     def run
       while socket = @server.accept
-      handle(socket)
+        @queue << socket
       end
     end
 

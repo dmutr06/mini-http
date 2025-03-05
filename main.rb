@@ -6,6 +6,7 @@ include MiniHttp
 server = Server.new 6969
 
 server.use do |req|
+  return nil if req.body == nil
   begin
     req.body = JSON.parse req.body
     nil
